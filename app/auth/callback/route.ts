@@ -11,5 +11,6 @@ export async function GET(request: Request) {
     await supabase.auth.exchangeCodeForSession(code)
   }
 
+  // Redirect to the home page after successful authentication
   return NextResponse.redirect(requestUrl.origin)
 }
