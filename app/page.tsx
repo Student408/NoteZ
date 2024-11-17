@@ -1,7 +1,7 @@
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
-import NoteList from '..//app/components/NoteList'
+import NoteEditor from '../components/note-editor'
 
 export default async function Home() {
   const supabase = createServerComponentClient({ cookies })
@@ -12,9 +12,8 @@ export default async function Home() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <h1 className="text-4xl font-bold mb-8">Real-time Notes</h1>
-      <NoteList />
-    </main>
+    <div className="dark:bg-zinc-900 dark:text-white">
+      <NoteEditor />
+    </div>
   )
 }

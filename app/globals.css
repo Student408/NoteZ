@@ -2,6 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.ProseMirror {
+  min-height: 300px;
+  outline: none;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  color: #666;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
 :root {
   --foreground-rgb: 0, 0, 0;
   --background-start-rgb: 214, 219, 220;
