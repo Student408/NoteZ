@@ -1,14 +1,22 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import { useRouter } from 'next/navigation'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
+import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
+import { common, createLowlight } from 'lowlight'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { LayoutList, PenSquare, LogOut, Menu, RotateCcw, RotateCw, Eye, Save, Trash2, X } from 'lucide-react'
+import { LayoutList, PenSquare, LogOut, Menu, RotateCcw, RotateCw, Eye, Save, Trash2, X, Search, Moon, Sun } from 'lucide-react'
+import debounce from 'lodash/debounce'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/atom-one-dark.css'
+import ReactMarkdown from 'react-markdown'
+
+const lowlight = createLowlight(common)
 
 type Note = {
   id: string
@@ -18,6 +26,11 @@ type Note = {
   user_id: string
 }
 
+type HistoryState = {
+  content: string
+  timestamp: number
+}
+
 export default function NoteEditor() {
   const [notes, setNotes] = useState<Note[]>([])
   const [selectedNote, setSelectedNote] = useState<Note | null>(null)
@@ -25,6 +38,10 @@ export default function NoteEditor() {
   const [content, setContent] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isPreview, setIsPreview] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [history, setHistory] = useState<HistoryState[]>([])
+  const [historyIndex, setHistoryIndex] = useState(-1)
   const router = useRouter()
   const supabase = createClientComponentClient()
   const sidebarRef = useRef<HTMLDivElement>(null)
@@ -33,35 +50,79 @@ export default function NoteEditor() {
     extensions: [
       StarterKit,
       Underline,
+      CodeBlockLowlight.configure({
+        lowlight,
+        HTMLAttributes: {
+          class: 'hljs',
+        },
+      }),
     ],
     content: '',
     onUpdate: ({ editor }) => {
-      setContent(editor.getHTML())
+      const newContent = editor.getHTML()
+      setContent(newContent)
+      updateHistory(newContent)
+      debouncedAutoSave(newContent)
+    },
+    editorProps: {
+      attributes: {
+        class: 'prose dark:prose-invert focus:outline-none max-w-full min-h-[500px]',
+      },
     },
   })
 
+  // Load history from localStorage
+  useEffect(() => {
+    const savedHistory = localStorage.getItem('noteHistory')
+    if (savedHistory) {
+      setHistory(JSON.parse(savedHistory))
+      setHistoryIndex(JSON.parse(savedHistory).length - 1)
+    }
+  }, [])
+
+  // Save history to localStorage
+  useEffect(() => {
+    localStorage.setItem('noteHistory', JSON.stringify(history))
+  }, [history])
+
+  const updateHistory = (newContent: string) => {
+    const timestamp = Date.now()
+    setHistory(prev => [...prev.slice(0, historyIndex + 1), { content: newContent, timestamp }])
+    setHistoryIndex(prev => prev + 1)
+  }
+
+  const undo = () => {
+    if (historyIndex > 0) {
+      setHistoryIndex(prev => prev - 1)
+      const previousState = history[historyIndex - 1]
+      editor?.commands.setContent(previousState.content)
+      setContent(previousState.content)
+    }
+  }
+
+  const redo = () => {
+    if (historyIndex < history.length - 1) {
+      setHistoryIndex(prev => prev + 1)
+      const nextState = history[historyIndex + 1]
+      editor?.commands.setContent(nextState.content)
+      setContent(nextState.content)
+    }
+  }
+
   useEffect(() => {
     fetchNotes()
+    const savedTheme = localStorage.getItem('theme') as 'dark' | 'light' || 'dark'
+    setTheme(savedTheme)
+    document.documentElement.classList.toggle('dark', savedTheme === 'dark')
   }, [])
 
   useEffect(() => {
     if (editor && selectedNote) {
       editor.commands.setContent(selectedNote.content)
+      setHistory([{ content: selectedNote.content, timestamp: Date.now() }])
+      setHistoryIndex(0)
     }
   }, [selectedNote, editor])
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (sidebarRef.current && !sidebarRef.current.contains(event.target as Node)) {
-        setSidebarOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [])
 
   const fetchNotes = async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -82,40 +143,43 @@ export default function NoteEditor() {
     }
   }
 
-  const handleSave = async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+  const debouncedAutoSave = useCallback(
+    debounce(async (newContent: string) => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
 
-    const noteData = {
-      title,
-      content,
-      user_id: user.id
-    }
-
-    if (selectedNote) {
-      const { error } = await supabase
-        .from('notes')
-        .update(noteData)
-        .match({ id: selectedNote.id })
-
-      if (!error) {
-        const updatedNotes = notes.map(note => 
-          note.id === selectedNote.id ? { ...note, ...noteData } : note
-        )
-        setNotes(updatedNotes)
+      const noteData = {
+        title,
+        content: newContent,
+        user_id: user.id
       }
-    } else {
-      const { data, error } = await supabase
-        .from('notes')
-        .insert([noteData])
-        .select()
 
-      if (!error && data) {
-        setNotes([data[0], ...notes])
-        setSelectedNote(data[0])
+      if (selectedNote) {
+        const { error } = await supabase
+          .from('notes')
+          .update(noteData)
+          .match({ id: selectedNote.id })
+
+        if (!error) {
+          const updatedNotes = notes.map(note => 
+            note.id === selectedNote.id ? { ...note, ...noteData } : note
+          )
+          setNotes(updatedNotes)
+        }
+      } else {
+        const { data, error } = await supabase
+          .from('notes')
+          .insert([noteData])
+          .select()
+
+        if (!error && data) {
+          setNotes([data[0], ...notes])
+          setSelectedNote(data[0])
+        }
       }
-    }
-  }
+    }, 1000),
+    [selectedNote, title, notes]
+  )
 
   const handleRemove = async (noteId: string) => {
     const { error } = await supabase
@@ -131,6 +195,8 @@ export default function NoteEditor() {
         setTitle('')
         setContent('')
         editor?.commands.setContent('')
+        setHistory([])
+        setHistoryIndex(-1)
       }
     }
   }
@@ -140,20 +206,31 @@ export default function NoteEditor() {
     router.push('/login')
   }
 
+  const toggleTheme = () => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark'
+    setTheme(newTheme)
+    localStorage.setItem('theme', newTheme)
+    document.documentElement.classList.toggle('dark', newTheme === 'dark')
+  }
+
+  const filteredNotes = notes.filter(note => 
+    note.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    note.content.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
   return (
-    <div className="flex h-screen bg-[#1A1A1A] text-white">
-      {/* Sidebar */}
+    <div className={`flex h-screen ${theme === 'dark' ? 'dark' : ''}`}>
       <div 
         ref={sidebarRef}
         className={`${
           sidebarOpen ? 'w-64 md:w-72' : 'w-0'
-        } transition-all duration-300 overflow-hidden fixed md:relative h-full z-20 bg-[#262626] border-r border-[#404040]`}
+        } transition-all duration-300 overflow-hidden fixed md:relative h-full z-20 bg-white dark:bg-zinc-900 border-r border-gray-200 dark:border-zinc-800`}
       >
         <div className="p-4 h-full flex flex-col">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <LayoutList className="h-5 w-5" />
-              <span className="font-semibold">Notes</span>
+              <LayoutList className="h-5 w-5 text-purple-500" />
+              <span className="font-semibold text-gray-900 dark:text-white">Notes</span>
             </div>
             <Button 
               variant="ghost" 
@@ -164,26 +241,34 @@ export default function NoteEditor() {
               <X className="h-4 w-4" />
             </Button>
           </div>
+          <Input
+            type="text"
+            placeholder="Search notes..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="mb-4"
+          />
           <Button
-            variant="ghost"
-            className="w-full justify-start gap-2 mb-4"
+            className="w-full justify-start gap-2 mb-4 bg-gradient-to-r from-blue-500 to-pink-300 hover:from-blue-600 hover:to-pink-400 text-white border-0"
             onClick={() => {
               setSelectedNote(null)
               setTitle('')
               editor?.commands.setContent('')
               setSidebarOpen(false)
+              setHistory([])
+              setHistoryIndex(-1)
             }}
           >
             <PenSquare className="h-4 w-4" />
             New Note
           </Button>
           <div className="flex-1 overflow-y-auto space-y-2">
-            {notes.map((note) => (
+            {filteredNotes.map((note) => (
               <div key={note.id} className="group flex items-center gap-2">
                 <Button
                   variant="ghost"
                   className={`flex-1 justify-start truncate ${
-                    selectedNote?.id === note.id ? 'bg-[#404040]' : ''
+                    selectedNote?.id === note.id ? 'bg-gradient-to-r from-purple-500/10 to-pink-500/10 text-purple-500 dark:text-purple-400' : ''
                   }`}
                   onClick={() => {
                     setSelectedNote(note)
@@ -208,9 +293,8 @@ export default function NoteEditor() {
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col w-full">
-        <header className="flex justify-between items-center p-4 bg-[#262626] border-b border-[#404040]">
+      <div className="flex-1 flex flex-col w-full bg-white dark:bg-zinc-900 text-gray-900 dark:text-white">
+        <header className="flex justify-between items-center p-4 bg-gray-50 dark:bg-zinc-800/50 border-b border-gray-200 dark:border-zinc-800">
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
               <Menu className="h-5 w-5" />
@@ -219,10 +303,18 @@ export default function NoteEditor() {
               {selectedNote ? 'Edit note' : 'New note'}
             </h1>
           </div>
-          <Button variant="outline" onClick={handleLogout}>
-            <LogOut className="h-4 w-4 mr-2" />
-            <span className="hidden sm:inline">Logout</span>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" onClick={toggleTheme}>
+              {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </Button>
+            <Button 
+              onClick={handleLogout}
+              className="bg-gradient-to-r from-blue-500 to-pink-300 hover:from-blue-600 hover:to-pink-400 text-white border-0"
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              <span className="hidden sm:inline">Logout</span>
+            </Button>
+          </div>
         </header>
 
         <div className="p-4 flex-1 flex flex-col gap-4 max-w-4xl mx-auto w-full">
@@ -231,34 +323,34 @@ export default function NoteEditor() {
             placeholder="Enter your note title..."
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            className="bg-[#262626] border-[#404040]"
+            className="bg-white dark:bg-zinc-800 border-gray-200 dark:border-zinc-700"
           />
 
           {editor && (
-            <div className="flex items-center gap-1 p-1 rounded-md bg-[#262626] overflow-x-auto">
+            <div className="flex items-center gap-1 p-1 rounded-md bg-gray-50 dark:bg-zinc-800/50 overflow-x-auto">
               <Button 
                 variant="ghost" 
                 size="icon" 
-                onClick={() => editor.chain().focus().undo().run()}
-                disabled={!editor.can().undo()}
+                onClick={undo}
+                disabled={historyIndex <= 0}
               >
                 <RotateCcw className="h-4 w-4" />
               </Button>
               <Button 
                 variant="ghost" 
                 size="icon" 
-                onClick={() => editor.chain().focus().redo().run()}
-                disabled={!editor.can().redo()}
+                onClick={redo}
+                disabled={historyIndex >= history.length - 1}
               >
                 <RotateCw className="h-4 w-4" />
               </Button>
-              <div className="w-px h-6 bg-[#404040]" />
+              <div className="w-px h-6 bg-gray-300 dark:bg-zinc-700" />
               <Button 
                 variant="ghost" 
                 size="icon"
                 onClick={() => editor.chain().focus().toggleBold().run()}
                 data-active={editor.isActive('bold')}
-                className="data-[active=true]:bg-[#404040]"
+                className="data-[active=true]:bg-gradient-to-r data-[active=true]:from-purple-500/10 data-[active=true]:to-pink-500/10"
               >
                 <span className="font-bold">B</span>
               </Button>
@@ -267,22 +359,33 @@ export default function NoteEditor() {
                 size="icon"
                 onClick={() => editor.chain().focus().toggleItalic().run()}
                 data-active={editor.isActive('italic')}
-                className="data-[active=true]:bg-[#404040]"
+                className="data-[active=true]:bg-gradient-to-r data-[active=true]:from-purple-500/10 data-[active=true]:to-pink-500/10"
               >
                 <span className="italic">I</span>
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="icon"
+                onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+                data-active={editor.isActive('codeBlock')}
+                className="data-[active=true]:bg-gradient-to-r data-[active=true]:from-purple-500/10 data-[active=true]:to-pink-500/10"
+              >
+                <span className="font-mono">{'</>'}</span>
               </Button>
               <div className="flex-1" />
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => setIsPreview(!isPreview)}
+                className={isPreview ? 'bg-gradient-to-r from-purple-500/10 to-pink-500/10' : ''}
               >
                 <Eye className="h-4 w-4" />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={handleSave}
+                onClick={() => debouncedAutoSave(content)}
+                className="hover:bg-gradient-to-r hover:from-purple-500/10 hover:to-pink-500/10"
               >
                 <Save className="h-4 w-4" />
               </Button>
@@ -299,12 +402,39 @@ export default function NoteEditor() {
           )}
 
           <div className="flex-1 overflow-auto">
-            <EditorContent 
-              editor={editor} 
-              className={`h-full ${
-                isPreview ? 'prose prose-invert max-w-none' : ''
-              } bg-[#262626] border border-[#404040] rounded-md p-4`}
-            />
+            {isPreview ? (
+              <div className="prose dark:prose-invert max-w-none bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-md p-4">
+                <ReactMarkdown
+                  components={{
+                    code({ node, inline, className, children, ...props }) {
+                      const match = /language-(\w+)/.exec(className || '')
+                      return !inline && match ? (
+                        <pre className={className}>
+                          <code
+                            className={match[1]}
+                            {...props}
+                            dangerouslySetInnerHTML={{
+                              __html: hljs.highlight(match[1], children.toString()).value,
+                            }}
+                          />
+                        </pre>
+                      ) : (
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
+                      )
+                    },
+                  }}
+                >
+                  {content}
+                </ReactMarkdown>
+              </div>
+            ) : (
+              <EditorContent 
+                editor={editor} 
+                className="h-full bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-md p-4"
+              />
+            )}
           </div>
         </div>
       </div>
