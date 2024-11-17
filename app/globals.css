@@ -3,9 +3,7 @@
 @tailwind utilities;
 
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+
 
 .ProseMirror {
   min-height: 300px;

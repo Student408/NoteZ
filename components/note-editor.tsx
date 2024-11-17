@@ -10,7 +10,7 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { common, createLowlight } from 'lowlight'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { LayoutList, PenSquare, LogOut, Menu, RotateCcw, RotateCw, Eye, Save, Trash2, X, Search, Moon, Sun } from 'lucide-react'
+import { LayoutList, PenSquare, LogOut, Menu, RotateCcw, RotateCw, Eye, Save, Trash2, X, Moon, Sun } from 'lucide-react'
 import debounce from 'lodash/debounce'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
@@ -71,7 +71,6 @@ export default function NoteEditor() {
     },
   })
 
-  // Load history from localStorage
   useEffect(() => {
     const savedHistory = localStorage.getItem('noteHistory')
     if (savedHistory) {
@@ -80,7 +79,6 @@ export default function NoteEditor() {
     }
   }, [])
 
-  // Save history to localStorage
   useEffect(() => {
     localStorage.setItem('noteHistory', JSON.stringify(history))
   }, [history])
@@ -109,22 +107,7 @@ export default function NoteEditor() {
     }
   }
 
-  useEffect(() => {
-    fetchNotes()
-    const savedTheme = localStorage.getItem('theme') as 'dark' | 'light' || 'dark'
-    setTheme(savedTheme)
-    document.documentElement.classList.toggle('dark', savedTheme === 'dark')
-  }, [])
-
-  useEffect(() => {
-    if (editor && selectedNote) {
-      editor.commands.setContent(selectedNote.content)
-      setHistory([{ content: selectedNote.content, timestamp: Date.now() }])
-      setHistoryIndex(0)
-    }
-  }, [selectedNote, editor])
-
-  const fetchNotes = async () => {
+  const fetchNotes = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       router.push('/login')
@@ -141,7 +124,22 @@ export default function NoteEditor() {
     } else {
       setNotes(data || [])
     }
-  }
+  }, [supabase, router])
+
+  useEffect(() => {
+    fetchNotes()
+    const savedTheme = localStorage.getItem('theme') as 'dark' | 'light' || 'dark'
+    setTheme(savedTheme)
+    document.documentElement.classList.toggle('dark', savedTheme === 'dark')
+  }, [fetchNotes])
+
+  useEffect(() => {
+    if (editor && selectedNote) {
+      editor.commands.setContent(selectedNote.content)
+      setHistory([{ content: selectedNote.content, timestamp: Date.now() }])
+      setHistoryIndex(0)
+    }
+  }, [selectedNote, editor])
 
   const debouncedAutoSave = useCallback(
     debounce(async (newContent: string) => {
@@ -178,7 +176,7 @@ export default function NoteEditor() {
         }
       }
     }, 1000),
-    [selectedNote, title, notes]
+    [selectedNote, title, notes, supabase]
   )
 
   const handleRemove = async (noteId: string) => {
@@ -239,6 +237,7 @@ export default function NoteEditor() {
               className="md:hidden"
             >
               <X className="h-4 w-4" />
+              <span className="sr-only">Close sidebar</span>
             </Button>
           </div>
           <Input
@@ -286,6 +285,7 @@ export default function NoteEditor() {
                   onClick={() => handleRemove(note.id)}
                 >
                   <Trash2 className="h-4 w-4 text-red-400" />
+                  <span className="sr-only">Delete note</span>
                 </Button>
               </div>
             ))}
@@ -298,6 +298,7 @@ export default function NoteEditor() {
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
               <Menu className="h-5 w-5" />
+              <span className="sr-only">Toggle sidebar</span>
             </Button>
             <h1 className="text-xl font-semibold">
               {selectedNote ? 'Edit note' : 'New note'}
@@ -306,6 +307,7 @@ export default function NoteEditor() {
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" onClick={toggleTheme}>
               {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+              <span className="sr-only">Toggle theme</span>
             </Button>
             <Button 
               onClick={handleLogout}
@@ -335,6 +337,7 @@ export default function NoteEditor() {
                 disabled={historyIndex <= 0}
               >
                 <RotateCcw className="h-4 w-4" />
+                <span className="sr-only">Undo</span>
               </Button>
               <Button 
                 variant="ghost" 
@@ -343,6 +346,7 @@ export default function NoteEditor() {
                 disabled={historyIndex >= history.length - 1}
               >
                 <RotateCw className="h-4 w-4" />
+                <span className="sr-only">Redo</span>
               </Button>
               <div className="w-px h-6 bg-gray-300 dark:bg-zinc-700" />
               <Button 
@@ -380,6 +384,7 @@ export default function NoteEditor() {
                 className={isPreview ? 'bg-gradient-to-r from-purple-500/10 to-pink-500/10' : ''}
               >
                 <Eye className="h-4 w-4" />
+                <span className="sr-only">Toggle preview</span>
               </Button>
               <Button
                 variant="ghost"
@@ -388,6 +393,7 @@ export default function NoteEditor() {
                 className="hover:bg-gradient-to-r hover:from-purple-500/10 hover:to-pink-500/10"
               >
                 <Save className="h-4 w-4" />
+                <span className="sr-only">Save note</span>
               </Button>
               {selectedNote && (
                 <Button
@@ -396,6 +402,7 @@ export default function NoteEditor() {
                   onClick={() => handleRemove(selectedNote.id)}
                 >
                   <Trash2 className="h-4 w-4 text-red-400" />
+                  <span className="sr-only">Delete note</span>
                 </Button>
               )}
             </div>
@@ -406,22 +413,22 @@ export default function NoteEditor() {
               <div className="prose dark:prose-invert max-w-none bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-md p-4">
                 <ReactMarkdown
                   components={{
-                    code({ node, inline, className, children, ...props }) {
+                    code({ node, className, children, ...props }) {
                       const match = /language-(\w+)/.exec(className || '')
-                      return !inline && match ? (
+                      return !match ? (
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
+                      ) : (
                         <pre className={className}>
                           <code
                             className={match[1]}
                             {...props}
                             dangerouslySetInnerHTML={{
-                              __html: hljs.highlight(match[1], children.toString()).value,
+                              __html: hljs.highlight(match[1], children?.toString() || '').value,
                             }}
                           />
                         </pre>
-                      ) : (
-                        <code className={className} {...props}>
-                          {children}
-                        </code>
                       )
                     },
                   }}

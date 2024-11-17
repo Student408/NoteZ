@@ -7,7 +7,7 @@ import { SpeedInsights } from '@vercel/speed-insights/next';
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Trackit',
+  title: 'NoteZ',
   description: 'Manage your financial transactions with ease',
   icons: {
     icon: '/favicon.ico',  // Path to your favicon
