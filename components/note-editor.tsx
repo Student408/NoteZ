@@ -134,7 +134,42 @@ export default function NoteEditor() {
     const savedTheme = localStorage.getItem('theme') as 'dark' | 'light' || 'dark'
     setTheme(savedTheme)
     document.documentElement.classList.toggle('dark', savedTheme === 'dark')
-  }, [fetchNotes])
+
+    // Set up real-time subscription for all notes
+    const subscription = supabase
+      .channel('public:notes')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notes' }, (payload) => {
+        const updatedNote = payload.new as Note
+        setNotes(prevNotes => prevNotes.map(note => 
+          note.id === updatedNote.id ? updatedNote : note
+        ))
+        if (selectedNote && selectedNote.id === updatedNote.id && !isEditing) {
+          setSelectedNote(updatedNote)
+          setTitle(updatedNote.title)
+          setContent(updatedNote.content)
+          editor?.commands.setContent(updatedNote.content)
+        }
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notes' }, (payload) => {
+        const newNote = payload.new as Note
+        setNotes(prevNotes => [newNote, ...prevNotes])
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'notes' }, (payload) => {
+        const deletedNoteId = payload.old.id
+        setNotes(prevNotes => prevNotes.filter(note => note.id !== deletedNoteId))
+        if (selectedNote && selectedNote.id === deletedNoteId) {
+          setSelectedNote(null)
+          setTitle('')
+          setContent('')
+          editor?.commands.setContent('')
+        }
+      })
+      .subscribe()
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [fetchNotes, supabase, editor, selectedNote, isEditing])
 
   useEffect(() => {
     if (editor && selectedNote) {
@@ -182,27 +217,6 @@ export default function NoteEditor() {
     }, 1000),
     [selectedNote, title, notes, supabase]
   )
-
-  useEffect(() => {
-    if (!selectedNote) return
-
-    const subscription = supabase
-      .channel(`notes:${selectedNote.id}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notes', filter: `id=eq.${selectedNote.id}` }, (payload) => {
-        if (!isEditing) {
-          const updatedNote = payload.new as Note
-          setSelectedNote(updatedNote)
-          setTitle(updatedNote.title)
-          setContent(updatedNote.content)
-          editor?.commands.setContent(updatedNote.content)
-        }
-      })
-      .subscribe()
-
-    return () => {
-      subscription.unsubscribe()
-    }
-  }, [selectedNote, supabase, editor, isEditing])
 
   const handleRemove = async (noteId: string) => {
     const { error } = await supabase
@@ -393,7 +407,7 @@ export default function NoteEditor() {
                   <Button 
                     variant="ghost" 
                     size="icon"
-                onClick={() => editor.chain().focus().toggleItalic().run()}
+                    onClick={() => editor.chain().focus().toggleItalic().run()}
                     data-active={editor.isActive('italic')}
                     className="data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
                   >
