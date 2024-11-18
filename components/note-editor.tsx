@@ -10,6 +10,7 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { common, createLowlight } from 'lowlight'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { LayoutList, PenSquare, LogOut, Menu, RotateCcw, RotateCw, Eye, Save, Trash2, X, Moon, Sun } from 'lucide-react'
 import debounce from 'lodash/debounce'
 import hljs from 'highlight.js'
@@ -45,6 +46,7 @@ export default function NoteEditor() {
   const router = useRouter()
   const supabase = createClientComponentClient()
   const sidebarRef = useRef<HTMLDivElement>(null)
+  const lastUpdateRef = useRef<number>(0)
 
   const editor = useEditor({
     extensions: [
@@ -131,7 +133,25 @@ export default function NoteEditor() {
     const savedTheme = localStorage.getItem('theme') as 'dark' | 'light' || 'dark'
     setTheme(savedTheme)
     document.documentElement.classList.toggle('dark', savedTheme === 'dark')
-  }, [fetchNotes])
+
+    // Set up real-time subscription
+    const subscription = supabase
+      .channel('notes_channel')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notes' }, (payload) => {
+        const updatedNote = payload.new as Note
+        if (updatedNote.id === selectedNote?.id && Date.now() - lastUpdateRef.current > 3000) {
+          setSelectedNote(updatedNote)
+          setTitle(updatedNote.title)
+          editor?.commands.setContent(updatedNote.content)
+          setContent(updatedNote.content)
+        }
+      })
+      .subscribe()
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [fetchNotes, supabase, editor, selectedNote])
 
   useEffect(() => {
     if (editor && selectedNote) {
@@ -163,6 +183,7 @@ export default function NoteEditor() {
             note.id === selectedNote.id ? { ...note, ...noteData } : note
           )
           setNotes(updatedNotes)
+          lastUpdateRef.current = Date.now()
         }
       } else {
         const { data, error } = await supabase
@@ -173,6 +194,7 @@ export default function NoteEditor() {
         if (!error && data) {
           setNotes([data[0], ...notes])
           setSelectedNote(data[0])
+          lastUpdateRef.current = Date.now()
         }
       }
     }, 1000),
