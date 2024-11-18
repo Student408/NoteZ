@@ -10,8 +10,6 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { common, createLowlight } from 'lowlight'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Toast } from "@/components/ui/toast"
-import { useToast } from "@/hooks/use-toast"
 import { LayoutList, PenSquare, LogOut, Menu, RotateCcw, RotateCw, Eye, Save, Trash2, X, Moon, Sun } from 'lucide-react'
 import debounce from 'lodash/debounce'
 import hljs from 'highlight.js'
@@ -26,7 +24,6 @@ type Note = {
   content: string
   created_at: string
   user_id: string
-  version: number
 }
 
 type HistoryState = {
@@ -50,7 +47,6 @@ export default function NoteEditor() {
   const sidebarRef = useRef<HTMLDivElement>(null)
   const lastUpdateRef = useRef<number>(0)
   const isLocalUpdateRef = useRef(false)
-  const { toast } = useToast()
 
   const editor = useEditor({
     extensions: [
@@ -127,15 +123,10 @@ export default function NoteEditor() {
 
     if (error) {
       console.error('Error fetching notes:', error)
-      toast({
-        title: "Error",
-        description: "Failed to fetch notes. Please try again.",
-        variant: "destructive",
-      })
     } else {
       setNotes(data || [])
     }
-  }, [supabase, router, toast])
+  }, [supabase, router])
 
   useEffect(() => {
     fetchNotes()
@@ -153,16 +144,10 @@ export default function NoteEditor() {
             note.id === updatedNote.id ? updatedNote : note
           ))
           if (updatedNote.id === selectedNote?.id && !isLocalUpdateRef.current) {
-            if (updatedNote.version > (selectedNote?.version || 0)) {
-              setSelectedNote(updatedNote)
-              setTitle(updatedNote.title)
-              editor?.commands.setContent(updatedNote.content)
-              setContent(updatedNote.content)
-              toast({
-                title: "Note Updated",
-                description: "This note has been updated by another user.",
-              })
-            }
+            setSelectedNote(updatedNote)
+            setTitle(updatedNote.title)
+            editor?.commands.setContent(updatedNote.content)
+            setContent(updatedNote.content)
           }
         } else if (payload.eventType === 'INSERT') {
           const newNote = payload.new as Note
@@ -183,7 +168,7 @@ export default function NoteEditor() {
     return () => {
       subscription.unsubscribe()
     }
-  }, [fetchNotes, supabase, editor, selectedNote, toast])
+  }, [fetchNotes, supabase, editor, selectedNote])
 
   useEffect(() => {
     if (editor && selectedNote) {
@@ -201,8 +186,7 @@ export default function NoteEditor() {
       const noteData = {
         title,
         content: newContent,
-        user_id: user.id,
-        version: (selectedNote?.version || 0) + 1
+        user_id: user.id
       }
 
       isLocalUpdateRef.current = true
@@ -210,31 +194,14 @@ export default function NoteEditor() {
         const { data, error } = await supabase
           .from('notes')
           .update(noteData)
-          .match({ id: selectedNote.id, version: selectedNote.version })
+          .match({ id: selectedNote.id })
           .select()
 
-        if (error) {
-          console.error('Error updating note:', error)
-          toast({
-            title: "Error",
-            description: "Failed to save note. Please try again.",
-            variant: "destructive",
-          })
-          // Retry logic
-          setTimeout(() => debouncedAutoSave(newContent), 5000)
-        } else if (data && data.length > 0) {
+        if (!error && data) {
           setNotes(prevNotes => prevNotes.map(note => 
             note.id === selectedNote.id ? data[0] : note
           ))
           setSelectedNote(data[0])
-        } else {
-          // Conflict detected
-          toast({
-            title: "Conflict Detected",
-            description: "This note has been modified elsewhere. Refreshing content.",
-            variant: "destructive",
-          })
-          fetchNotes()
         }
       } else {
         const { data, error } = await supabase
@@ -242,23 +209,14 @@ export default function NoteEditor() {
           .insert([noteData])
           .select()
 
-        if (error) {
-          console.error('Error creating note:', error)
-          toast({
-            title: "Error",
-            description: "Failed to create note. Please try again.",
-            variant: "destructive",
-          })
-          // Retry logic
-          setTimeout(() => debouncedAutoSave(newContent), 5000)
-        } else if (data) {
+        if (!error && data) {
           setNotes(prevNotes => [data[0], ...prevNotes])
           setSelectedNote(data[0])
         }
       }
       isLocalUpdateRef.current = false
     }, 1000),
-    [selectedNote, title, supabase, fetchNotes, toast]
+    [selectedNote, title, supabase]
   )
 
   const handleRemove = async (noteId: string) => {
@@ -267,14 +225,7 @@ export default function NoteEditor() {
       .delete()
       .match({ id: noteId })
 
-    if (error) {
-      console.error('Error deleting note:', error)
-      toast({
-        title: "Error",
-        description: "Failed to delete note. Please try again.",
-        variant: "destructive",
-      })
-    } else {
+    if (!error) {
       setNotes(prevNotes => prevNotes.filter(note => note.id !== noteId))
       if (selectedNote?.id === noteId) {
         setSelectedNote(null)
@@ -284,10 +235,6 @@ export default function NoteEditor() {
         setHistory([])
         setHistoryIndex(-1)
       }
-      toast({
-        title: "Success",
-        description: "Note deleted successfully.",
-      })
     }
   }
 
@@ -540,7 +487,6 @@ export default function NoteEditor() {
           </div>
         </div>
       </div>
-      <Toast />
     </div>
   )
 }
