@@ -10,7 +10,6 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { common, createLowlight } from 'lowlight'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { LayoutList, PenSquare, LogOut, Menu, RotateCcw, RotateCw, Eye, Save, Trash2, X, Moon, Sun } from 'lucide-react'
 import debounce from 'lodash/debounce'
 import hljs from 'highlight.js'
@@ -47,6 +46,7 @@ export default function NoteEditor() {
   const supabase = createClientComponentClient()
   const sidebarRef = useRef<HTMLDivElement>(null)
   const lastUpdateRef = useRef<number>(0)
+  const isUpdatingRef = useRef(false)
 
   const editor = useEditor({
     extensions: [
@@ -137,13 +137,30 @@ export default function NoteEditor() {
     // Set up real-time subscription
     const subscription = supabase
       .channel('notes_channel')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notes' }, (payload) => {
-        const updatedNote = payload.new as Note
-        if (updatedNote.id === selectedNote?.id && Date.now() - lastUpdateRef.current > 3000) {
-          setSelectedNote(updatedNote)
-          setTitle(updatedNote.title)
-          editor?.commands.setContent(updatedNote.content)
-          setContent(updatedNote.content)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, (payload) => {
+        if (payload.eventType === 'UPDATE') {
+          const updatedNote = payload.new as Note
+          setNotes(prevNotes => prevNotes.map(note => 
+            note.id === updatedNote.id ? updatedNote : note
+          ))
+          if (updatedNote.id === selectedNote?.id && !isUpdatingRef.current) {
+            setSelectedNote(updatedNote)
+            setTitle(updatedNote.title)
+            editor?.commands.setContent(updatedNote.content)
+            setContent(updatedNote.content)
+          }
+        } else if (payload.eventType === 'INSERT') {
+          const newNote = payload.new as Note
+          setNotes(prevNotes => [newNote, ...prevNotes])
+        } else if (payload.eventType === 'DELETE') {
+          const deletedNoteId = payload.old.id
+          setNotes(prevNotes => prevNotes.filter(note => note.id !== deletedNoteId))
+          if (selectedNote?.id === deletedNoteId) {
+            setSelectedNote(null)
+            setTitle('')
+            setContent('')
+            editor?.commands.setContent('')
+          }
         }
       })
       .subscribe()
@@ -172,6 +189,7 @@ export default function NoteEditor() {
         user_id: user.id
       }
 
+      isUpdatingRef.current = true
       if (selectedNote) {
         const { error } = await supabase
           .from('notes')
@@ -179,11 +197,9 @@ export default function NoteEditor() {
           .match({ id: selectedNote.id })
 
         if (!error) {
-          const updatedNotes = notes.map(note => 
+          setNotes(prevNotes => prevNotes.map(note => 
             note.id === selectedNote.id ? { ...note, ...noteData } : note
-          )
-          setNotes(updatedNotes)
-          lastUpdateRef.current = Date.now()
+          ))
         }
       } else {
         const { data, error } = await supabase
@@ -192,13 +208,13 @@ export default function NoteEditor() {
           .select()
 
         if (!error && data) {
-          setNotes([data[0], ...notes])
+          setNotes(prevNotes => [data[0], ...prevNotes])
           setSelectedNote(data[0])
-          lastUpdateRef.current = Date.now()
         }
       }
+      isUpdatingRef.current = false
     }, 1000),
-    [selectedNote, title, notes, supabase]
+    [selectedNote, title, supabase]
   )
 
   const handleRemove = async (noteId: string) => {
@@ -208,8 +224,7 @@ export default function NoteEditor() {
       .match({ id: noteId })
 
     if (!error) {
-      const updatedNotes = notes.filter(note => note.id !== noteId)
-      setNotes(updatedNotes)
+      setNotes(prevNotes => prevNotes.filter(note => note.id !== noteId))
       if (selectedNote?.id === noteId) {
         setSelectedNote(null)
         setTitle('')
