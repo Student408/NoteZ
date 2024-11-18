@@ -10,7 +10,8 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { common, createLowlight } from 'lowlight'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { LayoutList, PenSquare, LogOut, Menu, RotateCcw, RotateCw, Eye, Save, Trash2, X, Moon, Sun } from 'lucide-react'
+import { Card, CardContent } from "@/components/ui/card"
+import { LayoutList, PenSquare, LogOut, Menu, RotateCcw, RotateCw, Eye, Save, Trash2, X, Moon, Sun, Bold, Italic, Code } from 'lucide-react'
 import debounce from 'lodash/debounce'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
@@ -42,6 +43,7 @@ export default function NoteEditor() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [history, setHistory] = useState<HistoryState[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
+  const [isEditing, setIsEditing] = useState(false)
   const router = useRouter()
   const supabase = createClientComponentClient()
   const sidebarRef = useRef<HTMLDivElement>(null)
@@ -62,6 +64,7 @@ export default function NoteEditor() {
       const newContent = editor.getHTML()
       setContent(newContent)
       updateHistory(newContent)
+      setIsEditing(true)
       debouncedAutoSave(newContent)
     },
     editorProps: {
@@ -175,9 +178,31 @@ export default function NoteEditor() {
           setSelectedNote(data[0])
         }
       }
+      setIsEditing(false)
     }, 1000),
     [selectedNote, title, notes, supabase]
   )
+
+  useEffect(() => {
+    if (!selectedNote) return
+
+    const subscription = supabase
+      .channel(`notes:${selectedNote.id}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notes', filter: `id=eq.${selectedNote.id}` }, (payload) => {
+        if (!isEditing) {
+          const updatedNote = payload.new as Note
+          setSelectedNote(updatedNote)
+          setTitle(updatedNote.title)
+          setContent(updatedNote.content)
+          editor?.commands.setContent(updatedNote.content)
+        }
+      })
+      .subscribe()
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [selectedNote, supabase, editor, isEditing])
 
   const handleRemove = async (noteId: string) => {
     const { error } = await supabase
@@ -227,8 +252,8 @@ export default function NoteEditor() {
         <div className="p-4 h-full flex flex-col">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <LayoutList className="h-5 w-5 text-purple-500" />
-              <span className="font-semibold text-gray-900 dark:text-white">Notes</span>
+              <LayoutList className="h-5 w-5 text-primary" />
+              <span className="font-semibold text-primary">Notes</span>
             </div>
             <Button 
               variant="ghost" 
@@ -248,7 +273,7 @@ export default function NoteEditor() {
             className="mb-4"
           />
           <Button
-            className="w-full justify-start gap-2 mb-4 bg-gradient-to-r from-blue-500 to-pink-300 hover:from-blue-600 hover:to-pink-400 text-white border-0"
+            className="w-full justify-start gap-2 mb-4"
             onClick={() => {
               setSelectedNote(null)
               setTitle('')
@@ -267,7 +292,7 @@ export default function NoteEditor() {
                 <Button
                   variant="ghost"
                   className={`flex-1 justify-start truncate ${
-                    selectedNote?.id === note.id ? 'bg-gradient-to-r from-purple-500/10 to-pink-500/10 text-purple-500 dark:text-purple-400' : ''
+                    selectedNote?.id === note.id ? 'bg-primary/10 text-primary' : ''
                   }`}
                   onClick={() => {
                     setSelectedNote(note)
@@ -284,7 +309,7 @@ export default function NoteEditor() {
                   className="opacity-0 group-hover:opacity-100 transition-opacity"
                   onClick={() => handleRemove(note.id)}
                 >
-                  <Trash2 className="h-4 w-4 text-red-400" />
+                  <Trash2 className="h-4 w-4 text-destructive" />
                   <span className="sr-only">Delete note</span>
                 </Button>
               </div>
@@ -293,8 +318,8 @@ export default function NoteEditor() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col w-full bg-white dark:bg-zinc-900 text-gray-900 dark:text-white">
-        <header className="flex justify-between items-center p-4 bg-gray-50 dark:bg-zinc-800/50 border-b border-gray-200 dark:border-zinc-800">
+      <div className="flex-1 flex flex-col w-full bg-background text-foreground">
+        <header className="flex justify-between items-center p-4 bg-muted/50 border-b border-border">
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
               <Menu className="h-5 w-5" />
@@ -311,7 +336,7 @@ export default function NoteEditor() {
             </Button>
             <Button 
               onClick={handleLogout}
-              className="bg-gradient-to-r from-blue-500 to-pink-300 hover:from-blue-600 hover:to-pink-400 text-white border-0"
+              variant="secondary"
             >
               <LogOut className="h-4 w-4 mr-2" />
               <span className="hidden sm:inline">Logout</span>
@@ -324,123 +349,139 @@ export default function NoteEditor() {
             type="text"
             placeholder="Enter your note title..."
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="bg-white dark:bg-zinc-800 border-gray-200 dark:border-zinc-700"
+            onChange={(e) => {
+              setTitle(e.target.value)
+              setIsEditing(true)
+              debouncedAutoSave(content)
+            }}
+            className="bg-background border-input"
           />
 
           {editor && (
-            <div className="flex items-center gap-1 p-1 rounded-md bg-gray-50 dark:bg-zinc-800/50 overflow-x-auto">
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                onClick={undo}
-                disabled={historyIndex <= 0}
-              >
-                <RotateCcw className="h-4 w-4" />
-                <span className="sr-only">Undo</span>
-              </Button>
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                onClick={redo}
-                disabled={historyIndex >= history.length - 1}
-              >
-                <RotateCw className="h-4 w-4" />
-                <span className="sr-only">Redo</span>
-              </Button>
-              <div className="w-px h-6 bg-gray-300 dark:bg-zinc-700" />
-              <Button 
-                variant="ghost" 
-                size="icon"
-                onClick={() => editor.chain().focus().toggleBold().run()}
-                data-active={editor.isActive('bold')}
-                className="data-[active=true]:bg-gradient-to-r data-[active=true]:from-purple-500/10 data-[active=true]:to-pink-500/10"
-              >
-                <span className="font-bold">B</span>
-              </Button>
-              <Button 
-                variant="ghost" 
-                size="icon"
+            <Card>
+              <CardContent className="p-1">
+                <div className="flex items-center gap-1 mb-2 overflow-x-auto">
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    onClick={undo}
+                    disabled={historyIndex <= 0}
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    <span className="sr-only">Undo</span>
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    onClick={redo}
+                    disabled={historyIndex >= history.length - 1}
+                  >
+                    <RotateCw className="h-4 w-4" />
+                    <span className="sr-only">Redo</span>
+                  </Button>
+                  <div className="w-px h-6 bg-border" />
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    onClick={() => editor.chain().focus().toggleBold().run()}
+                    data-active={editor.isActive('bold')}
+                    className="data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+                  >
+                    <Bold className="h-4 w-4" />
+                    <span className="sr-only">Bold</span>
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
                 onClick={() => editor.chain().focus().toggleItalic().run()}
-                data-active={editor.isActive('italic')}
-                className="data-[active=true]:bg-gradient-to-r data-[active=true]:from-purple-500/10 data-[active=true]:to-pink-500/10"
-              >
-                <span className="italic">I</span>
-              </Button>
-              <Button 
-                variant="ghost" 
-                size="icon"
-                onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-                data-active={editor.isActive('codeBlock')}
-                className="data-[active=true]:bg-gradient-to-r data-[active=true]:from-purple-500/10 data-[active=true]:to-pink-500/10"
-              >
-                <span className="font-mono">{'</>'}</span>
-              </Button>
-              <div className="flex-1" />
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setIsPreview(!isPreview)}
-                className={isPreview ? 'bg-gradient-to-r from-purple-500/10 to-pink-500/10' : ''}
-              >
-                <Eye className="h-4 w-4" />
-                <span className="sr-only">Toggle preview</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => debouncedAutoSave(content)}
-                className="hover:bg-gradient-to-r hover:from-purple-500/10 hover:to-pink-500/10"
-              >
-                <Save className="h-4 w-4" />
-                <span className="sr-only">Save note</span>
-              </Button>
-              {selectedNote && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleRemove(selectedNote.id)}
-                >
-                  <Trash2 className="h-4 w-4 text-red-400" />
-                  <span className="sr-only">Delete note</span>
-                </Button>
-              )}
-            </div>
+                    data-active={editor.isActive('italic')}
+                    className="data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+                  >
+                    <Italic className="h-4 w-4" />
+                    <span className="sr-only">Italic</span>
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+                    data-active={editor.isActive('codeBlock')}
+                    className="data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+                  >
+                    <Code className="h-4 w-4" />
+                    <span className="sr-only">Code block</span>
+                  </Button>
+                  <div className="flex-1" />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setIsPreview(!isPreview)}
+                    className={isPreview ? 'bg-primary/10 text-primary' : ''}
+                  >
+                    <Eye className="h-4 w-4" />
+                    <span className="sr-only">Toggle preview</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => debouncedAutoSave(content)}
+                  >
+                    <Save className="h-4 w-4" />
+                    <span className="sr-only">Save note</span>
+                  </Button>
+                  {selectedNote && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRemove(selectedNote.id)}
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                      <span className="sr-only">Delete note</span>
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           )}
 
           <div className="flex-1 overflow-auto">
             {isPreview ? (
-              <div className="prose dark:prose-invert max-w-none bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-md p-4">
-                <ReactMarkdown
-                  components={{
-                    code({ node, className, children, ...props }) {
-                      const match = /language-(\w+)/.exec(className || '')
-                      return !match ? (
-                        <code className={className} {...props}>
-                          {children}
-                        </code>
-                      ) : (
-                        <pre className={className}>
-                          <code
-                            className={match[1]}
-                            {...props}
-                            dangerouslySetInnerHTML={{
-                              __html: hljs.highlight(match[1], children?.toString() || '').value,
-                            }}
-                          />
-                        </pre>
-                      )
-                    },
-                  }}
-                >
-                  {content}
-                </ReactMarkdown>
-              </div>
+              <Card>
+                <CardContent className="prose dark:prose-invert max-w-none p-4">
+                  <ReactMarkdown
+                    components={{
+                      code({ node, className, children, ...props }) {
+                        const match = /language-(\w+)/.exec(className || '')
+                        return !match ? (
+                          <code className={className} {...props}>
+                            {children}
+                          </code>
+                        ) : (
+                          <pre className={className}>
+                            <code
+                              className={match[1]}
+                              {...props}
+                              dangerouslySetInnerHTML={{
+                                __html: hljs.highlight(match[1], children?.toString() || '').value,
+                              }}
+                            />
+                          </pre>
+                        )
+                      },
+                    }}
+                  >
+                    {content}
+                  </ReactMarkdown>
+                </CardContent>
+              </Card>
             ) : (
-              <EditorContent 
-                editor={editor} 
-                className="h-full bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-md p-4"
-              />
+              <Card>
+                <CardContent className="p-0">
+                  <EditorContent 
+                    editor={editor} 
+                    className="min-h-[500px] p-4"
+                  />
+                </CardContent>
+              </Card>
             )}
           </div>
         </div>
