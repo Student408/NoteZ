@@ -45,8 +45,6 @@ export default function NoteEditor() {
   const router = useRouter()
   const supabase = createClientComponentClient()
   const sidebarRef = useRef<HTMLDivElement>(null)
-  const lastUpdateRef = useRef<number>(0)
-  const isLocalUpdateRef = useRef(false)
 
   const editor = useEditor({
     extensions: [
@@ -133,42 +131,7 @@ export default function NoteEditor() {
     const savedTheme = localStorage.getItem('theme') as 'dark' | 'light' || 'dark'
     setTheme(savedTheme)
     document.documentElement.classList.toggle('dark', savedTheme === 'dark')
-
-    // Set up real-time subscription
-    const subscription = supabase
-      .channel('notes_channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, (payload) => {
-        if (payload.eventType === 'UPDATE') {
-          const updatedNote = payload.new as Note
-          setNotes(prevNotes => prevNotes.map(note => 
-            note.id === updatedNote.id ? updatedNote : note
-          ))
-          if (updatedNote.id === selectedNote?.id && !isLocalUpdateRef.current) {
-            setSelectedNote(updatedNote)
-            setTitle(updatedNote.title)
-            editor?.commands.setContent(updatedNote.content)
-            setContent(updatedNote.content)
-          }
-        } else if (payload.eventType === 'INSERT') {
-          const newNote = payload.new as Note
-          setNotes(prevNotes => [newNote, ...prevNotes])
-        } else if (payload.eventType === 'DELETE') {
-          const deletedNoteId = payload.old.id
-          setNotes(prevNotes => prevNotes.filter(note => note.id !== deletedNoteId))
-          if (selectedNote?.id === deletedNoteId) {
-            setSelectedNote(null)
-            setTitle('')
-            setContent('')
-            editor?.commands.setContent('')
-          }
-        }
-      })
-      .subscribe()
-
-    return () => {
-      subscription.unsubscribe()
-    }
-  }, [fetchNotes, supabase, editor, selectedNote])
+  }, [fetchNotes])
 
   useEffect(() => {
     if (editor && selectedNote) {
@@ -189,19 +152,17 @@ export default function NoteEditor() {
         user_id: user.id
       }
 
-      isLocalUpdateRef.current = true
       if (selectedNote) {
-        const { data, error } = await supabase
+        const { error } = await supabase
           .from('notes')
           .update(noteData)
           .match({ id: selectedNote.id })
-          .select()
 
-        if (!error && data) {
-          setNotes(prevNotes => prevNotes.map(note => 
-            note.id === selectedNote.id ? data[0] : note
-          ))
-          setSelectedNote(data[0])
+        if (!error) {
+          const updatedNotes = notes.map(note => 
+            note.id === selectedNote.id ? { ...note, ...noteData } : note
+          )
+          setNotes(updatedNotes)
         }
       } else {
         const { data, error } = await supabase
@@ -210,13 +171,12 @@ export default function NoteEditor() {
           .select()
 
         if (!error && data) {
-          setNotes(prevNotes => [data[0], ...prevNotes])
+          setNotes([data[0], ...notes])
           setSelectedNote(data[0])
         }
       }
-      isLocalUpdateRef.current = false
     }, 1000),
-    [selectedNote, title, supabase]
+    [selectedNote, title, notes, supabase]
   )
 
   const handleRemove = async (noteId: string) => {
@@ -226,7 +186,8 @@ export default function NoteEditor() {
       .match({ id: noteId })
 
     if (!error) {
-      setNotes(prevNotes => prevNotes.filter(note => note.id !== noteId))
+      const updatedNotes = notes.filter(note => note.id !== noteId)
+      setNotes(updatedNotes)
       if (selectedNote?.id === noteId) {
         setSelectedNote(null)
         setTitle('')
@@ -363,10 +324,7 @@ export default function NoteEditor() {
             type="text"
             placeholder="Enter your note title..."
             value={title}
-            onChange={(e) => {
-              setTitle(e.target.value)
-              debouncedAutoSave(content)
-            }}
+            onChange={(e) => setTitle(e.target.value)}
             className="bg-white dark:bg-zinc-800 border-gray-200 dark:border-zinc-700"
           />
 
